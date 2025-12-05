@@ -1,0 +1,44 @@
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+
+# VM files
+*.qcow2
+*.img
+*.vdi
+*.vmdk
+
+# Keys (never commit!)
+munge.key
+*.key
+*.pem
+*.crt
+
+# Build artifacts
+*.tar.bz2
+*.tar.gz
+slurm-*/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Vagrant
+.vagrant/
+
+# Backup files
+*.backup
+*.bak
+*~
+
+video/

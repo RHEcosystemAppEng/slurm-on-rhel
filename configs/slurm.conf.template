@@ -1,0 +1,73 @@
+# Slurm Configuration Template
+# Copy this file to /etc/slurm/slurm.conf and customize for your setup
+
+ClusterName=slurm-cluster
+ControlMachine=localhost
+SlurmUser=slurm
+SlurmctldPort=6817
+SlurmdPort=6818
+AuthType=auth/munge
+StateSaveLocation=/var/spool/slurmctld
+SlurmdSpoolDir=/var/spool/slurmd
+SwitchType=switch/none
+MpiDefault=none
+SlurmctldPidFile=/var/run/slurmctld.pid
+SlurmdPidFile=/var/run/slurmd.pid
+ProctrackType=proctrack/linuxproc
+ReturnToService=1
+SlurmctldTimeout=300
+SlurmdTimeout=300
+InactiveLimit=0
+MinJobAge=300
+KillWait=30
+Waittime=0
+
+SchedulerType=sched/backfill
+SelectType=select/linear
+
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
+
+# ============================================
+# SINGLE-NODE SETUP (Controller + Compute on same machine)
+# ============================================
+# Replace <CPU_COUNT> with actual CPU count (use: nproc)
+NodeName=localhost NodeAddr=127.0.0.1 CPUs=<CPU_COUNT> State=UNKNOWN
+PartitionName=compute Nodes=localhost Default=YES MaxTime=INFINITE State=UP
+
+# ============================================
+# MULTI-NODE SETUP (Separate controller and compute nodes)
+# ============================================
+# Uncomment and customize for multi-node cluster:
+# NodeName=controller NodeAddr=192.168.1.10 CPUs=8 State=UNKNOWN
+# NodeName=compute1 NodeAddr=192.168.1.11 CPUs=4 State=UNKNOWN
+# NodeName=compute2 NodeAddr=192.168.1.12 CPUs=4 State=UNKNOWN
+# PartitionName=compute Nodes=controller,compute1,compute2 Default=YES MaxTime=INFINITE State=UP
+
+# ============================================
+# GPU NODE SETUP
+# ============================================
+# IMPORTANT: By default, nodes are CPU-only (no Gres parameter needed)
+# To enable GPU support, you MUST explicitly add Gres=gpu:X to the NodeName line
+# 
+# CPU-only node (default):
+# NodeName=compute1 NodeAddr=192.168.1.11 CPUs=4 State=UNKNOWN
+#
+# GPU node (explicitly configured with Gres=gpu:X):
+# NodeName=gpu-node1 NodeAddr=192.168.1.20 CPUs=8 Gres=gpu:2 State=UNKNOWN
+#   ^                                                      ^
+#   |                                                      |
+#   Node name and address                          REQUIRED: Gres=gpu:X (X = number of GPUs)
+#
+# PartitionName=gpu Nodes=gpu-node1 Default=NO MaxTime=INFINITE State=UP
+#
+# Also create /etc/slurm/gres.conf on all nodes (controller and GPU nodes)
+# See DETAILED_GUIDE.md "Adding GPU Nodes" section for complete instructions
+
+# ============================================
+# MULTIPLE PARTITIONS
+# ============================================
+# Example with multiple partitions:
+# PartitionName=short Nodes=ALL Default=NO MaxTime=01:00:00 State=UP
+# PartitionName=long Nodes=ALL Default=NO MaxTime=7-00:00:00 State=UP
+# PartitionName=compute Nodes=ALL Default=YES MaxTime=INFINITE State=UP
