@@ -16,22 +16,20 @@ Complete setup guide from installation to testing. Follow this if you already ha
 sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
 ```
 
-### Step 2: Install snapd
+### Step 2: Install and Enable snapd
 
 ```bash
+# Install snapd
 sudo dnf install -y snapd
-```
 
-### Step 3: Enable snapd Service
-
-```bash
+# Enable snapd service
 sudo systemctl enable --now snapd.socket
 sudo ln -s /var/lib/snapd/snap /snap
 ```
 
 **Important**: Log out and log back in (or restart) for snap paths to work.
 
-### Step 4: Install Munge (Required for Authentication)
+### Step 3: Install Munge (Required for Authentication)
 
 ```bash
 # Install Munge
@@ -51,7 +49,7 @@ sudo systemctl enable --now munge
 munge -n | unmunge
 ```
 
-### Step 5: Install Slurm
+### Step 4: Install Slurm
 
 ```bash
 # Install Slurm client tools (via snap)
@@ -61,7 +59,7 @@ sudo snap install slurm --classic
 sudo dnf install -y slurm-slurmctld slurm-slurmd
 ```
 
-### Step 6: Verify Installation
+### Step 5: Verify Installation
 
 ```bash
 # Check client tools
