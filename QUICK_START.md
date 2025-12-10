@@ -25,15 +25,29 @@ sudo dnf install -y snapd
 # Enable snapd service
 sudo systemctl enable --now snapd.socket
 sudo ln -s /var/lib/snapd/snap /snap
+
+# Wait a few seconds for snapd to initialize
+sleep 5
+
+# Verify snapd is ready
+snap version
 ```
 
-**Important**: Log out and log back in (or restart) for snap paths to work.
+**Important**: 
+- If you get "too early for operation" error, wait 10-30 seconds and try again
+- **Log out and log back in** (or restart the VM) for snap paths to work properly
+- After login, verify: `snap version` should work without errors
 
 ### Step 3: Install Munge (Required for Authentication)
 
+**Note**: If you encounter SSL certificate errors (OCSP response expired), see [Troubleshooting](#troubleshooting) section below.
+
 ```bash
 # Install Munge
-sudo dnf install -y munge munge-libs munge-devel
+sudo dnf install -y munge munge-libs
+
+# Note: munge-devel is optional (only needed for development)
+# If available, you can install it: sudo dnf install -y munge-devel
 
 # Generate Munge key
 sudo /usr/sbin/create-munge-key
@@ -53,10 +67,18 @@ munge -n | unmunge
 
 ```bash
 # Install Slurm client tools (via snap)
+# Note: If you get "too early for operation" error, wait 10-30 seconds and try again
 sudo snap install slurm --classic
+
+# Verify client tools are installed
+scontrol --version
 
 # Install Slurm server daemons (from EPEL)
 sudo dnf install -y slurm-slurmctld slurm-slurmd
+
+# Verify daemons are installed
+slurmctld --version
+slurmd --version
 ```
 
 ### Step 5: Verify Installation
@@ -75,8 +97,13 @@ slurmd --version
 ### Create Slurm Configuration
 
 ```bash
-# Get CPU count
+# Get CPU count and memory
 CPU_COUNT=$(nproc)
+MEMORY_MB=$(free -m | awk '/^Mem:/{print $2}')
+
+# Display values for verification
+echo "CPU count: ${CPU_COUNT}"
+echo "Memory: ${MEMORY_MB}MB"
 
 # Create configuration directory
 sudo mkdir -p /etc/slurm
@@ -103,16 +130,18 @@ InactiveLimit=0
 MinJobAge=300
 KillWait=30
 Waittime=0
-
 SchedulerType=sched/backfill
 SelectType=select/linear
-
 SlurmctldLogFile=/var/log/slurm/slurmctld.log
 SlurmdLogFile=/var/log/slurm/slurmd.log
-
-NodeName=localhost NodeAddr=127.0.0.1 CPUs=${CPU_COUNT} State=UNKNOWN
+NodeName=localhost NodeAddr=127.0.0.1 CPUs=${CPU_COUNT} RealMemory=${MEMORY_MB} State=UNKNOWN
 PartitionName=compute Nodes=localhost Default=YES MaxTime=INFINITE State=UP
 EOF
+
+# Verify configuration was created correctly
+echo "Verifying slurm.conf..."
+grep RealMemory /etc/slurm/slurm.conf
+echo "Configuration created successfully!"
 
 # Create required directories
 sudo mkdir -p /var/spool/slurmctld /var/spool/slurmd /var/log/slurm
@@ -139,6 +168,10 @@ sudo systemctl enable --now slurmd
 # Check status
 sudo systemctl status slurmctld
 sudo systemctl status slurmd
+
+# Verify Slurm recognizes the node and memory
+sinfo -o "%N %m"
+scontrol show node localhost | grep -i memory
 ```
 
 **Service Management:**
@@ -188,6 +221,53 @@ cat test.out
 
 ## Troubleshooting
 
+### Snap "Too Early for Operation" Error
+
+If you get `error: too early for operation, device not yet seeded`:
+
+```bash
+# Fix 1: Wait and check snapd status
+sudo systemctl status snapd.socket
+sudo systemctl status snapd
+
+# Fix 2: Restart snapd services
+sudo systemctl restart snapd.socket
+sudo systemctl restart snapd
+sleep 10
+
+# Fix 3: Verify snapd is ready
+snap version
+
+# Fix 4: If still failing, log out and log back in (or restart VM)
+# Then try: sudo snap install slurm --classic
+```
+
+**Why this happens**: snapd needs time to initialize after installation. The "seeding" process can take 10-30 seconds. If you try too quickly, it fails. Waiting or restarting snapd usually fixes it.
+
+### SSL Certificate Errors (OCSP Response Expired)
+
+If you get SSL certificate errors when installing packages:
+
+```bash
+# Fix 1: Update system time (most common cause)
+sudo chronyd -q
+# Or manually sync time:
+sudo timedatectl set-ntp true
+
+# Fix 2: Update certificate store
+sudo update-ca-trust
+
+# Fix 3: Temporarily disable SSL verification (not recommended, use only if above don't work)
+sudo dnf install -y --setopt=sslverify=false munge munge-libs munge-devel
+
+# Fix 4: Update subscription and certificates
+sudo subscription-manager refresh
+sudo subscription-manager repos --enable=rhel-9-for-aarch64-appstream-rpms
+sudo subscription-manager repos --enable=rhel-9-for-aarch64-baseos-rpms
+```
+
+### Slurm Service Issues
+
 ```bash
 # Check services
 sudo systemctl status slurmctld
@@ -207,8 +287,43 @@ sudo scontrol show config
 # Verify configuration file syntax
 sudo slurmctld -C
 
-# Check node status
+# Check node status and memory
 sinfo
+sinfo -o "%N %m"
+scontrol show node localhost | grep -i memory
+```
+
+### Memory Configuration Issues
+
+If memory shows as 1MB or N/A in `sinfo`:
+
+```bash
+# Check actual system memory
+free -m
+
+# Check what's in slurm.conf
+grep RealMemory /etc/slurm/slurm.conf
+
+# Fix: Update RealMemory to actual system memory
+MEMORY_MB=$(free -m | awk '/^Mem:/{print $2}')
+echo "Updating RealMemory to ${MEMORY_MB}MB"
+
+# Update RealMemory value
+sudo sed -i "s/RealMemory=[0-9]*/RealMemory=${MEMORY_MB}/" /etc/slurm/slurm.conf
+
+# Or if RealMemory doesn't exist, add it after CPUs
+CPU_COUNT=$(nproc)
+sudo sed -i "s/^NodeName=localhost.*/NodeName=localhost NodeAddr=127.0.0.1 CPUs=${CPU_COUNT} RealMemory=${MEMORY_MB} State=UNKNOWN/" /etc/slurm/slurm.conf
+
+# Verify the change
+grep RealMemory /etc/slurm/slurm.conf
+
+# Restart services
+sudo systemctl restart slurmctld slurmd
+
+# Verify it's now correct
+sinfo -o "%N %m"
+scontrol show node localhost | grep -i memory
 ```
 
 ## Next Steps

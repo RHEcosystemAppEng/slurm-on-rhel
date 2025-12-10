@@ -32,16 +32,18 @@ SlurmdLogFile=/var/log/slurm/slurmd.log
 # SINGLE-NODE SETUP (Controller + Compute on same machine)
 # ============================================
 # Replace <CPU_COUNT> with actual CPU count (use: nproc)
-NodeName=localhost NodeAddr=127.0.0.1 CPUs=<CPU_COUNT> State=UNKNOWN
+# Replace <MEMORY_MB> with actual memory in MB (use: free -m | awk '/^Mem:/{print $2}')
+NodeName=localhost NodeAddr=127.0.0.1 CPUs=<CPU_COUNT> RealMemory=<MEMORY_MB> State=UNKNOWN
 PartitionName=compute Nodes=localhost Default=YES MaxTime=INFINITE State=UP
 
 # ============================================
 # MULTI-NODE SETUP (Separate controller and compute nodes)
 # ============================================
 # Uncomment and customize for multi-node cluster:
-# NodeName=controller NodeAddr=192.168.1.10 CPUs=8 State=UNKNOWN
-# NodeName=compute1 NodeAddr=192.168.1.11 CPUs=4 State=UNKNOWN
-# NodeName=compute2 NodeAddr=192.168.1.12 CPUs=4 State=UNKNOWN
+# Replace <MEMORY_MB> with actual memory in MB for each node
+# NodeName=controller NodeAddr=192.168.1.10 CPUs=8 RealMemory=<MEMORY_MB> State=UNKNOWN
+# NodeName=compute1 NodeAddr=192.168.1.11 CPUs=4 RealMemory=<MEMORY_MB> State=UNKNOWN
+# NodeName=compute2 NodeAddr=192.168.1.12 CPUs=4 RealMemory=<MEMORY_MB> State=UNKNOWN
 # PartitionName=compute Nodes=controller,compute1,compute2 Default=YES MaxTime=INFINITE State=UP
 
 # ============================================
@@ -51,10 +53,10 @@ PartitionName=compute Nodes=localhost Default=YES MaxTime=INFINITE State=UP
 # To enable GPU support, you MUST explicitly add Gres=gpu:X to the NodeName line
 # 
 # CPU-only node (default):
-# NodeName=compute1 NodeAddr=192.168.1.11 CPUs=4 State=UNKNOWN
+# NodeName=compute1 NodeAddr=192.168.1.11 CPUs=4 RealMemory=<MEMORY_MB> State=UNKNOWN
 #
 # GPU node (explicitly configured with Gres=gpu:X):
-# NodeName=gpu-node1 NodeAddr=192.168.1.20 CPUs=8 Gres=gpu:2 State=UNKNOWN
+# NodeName=gpu-node1 NodeAddr=192.168.1.20 CPUs=8 RealMemory=<MEMORY_MB> Gres=gpu:2 State=UNKNOWN
 #   ^                                                      ^
 #   |                                                      |
 #   Node name and address                          REQUIRED: Gres=gpu:X (X = number of GPUs)

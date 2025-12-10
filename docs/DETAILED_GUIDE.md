@@ -33,15 +33,27 @@ sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.
 sudo dnf repolist | grep epel
 ```
 
-#### 2. Install snapd
+#### 2. Install and Enable snapd
 
 ```bash
+# Install snapd
 sudo dnf install -y snapd
+
+# Enable snapd service
 sudo systemctl enable --now snapd.socket
 sudo ln -s /var/lib/snapd/snap /snap
+
+# Wait a few seconds for snapd to initialize
+sleep 5
+
+# Verify snapd is ready
+snap version
 ```
 
-**Important**: Log out and log back in (or restart) for snap paths to work properly.
+**Important**: 
+- If you get "too early for operation" error, wait 10-30 seconds and try again
+- **Log out and log back in** (or restart) for snap paths to work properly
+- After login, verify: `snap version` should work without errors
 
 #### 3. Install Munge (Authentication)
 
@@ -49,7 +61,11 @@ Munge is required for secure communication between Slurm components.
 
 ```bash
 # Install Munge packages
-sudo dnf install -y munge munge-libs munge-devel
+sudo dnf install -y munge munge-libs
+
+# Note: munge-devel is optional (only needed for development)
+# If available in your repositories, you can install it:
+# sudo dnf install -y munge-devel
 
 # Generate Munge key
 sudo /usr/sbin/create-munge-key
@@ -84,40 +100,7 @@ slurmd --version
 
 ### Alternative: Build from Source
 
-If EPEL packages don't work (common on ARM64), build from source:
-
-```bash
-# Install build dependencies
-sudo dnf groupinstall -y "Development Tools"
-sudo dnf install -y gcc gcc-c++ make \
-    readline-devel pam-devel openssl-devel \
-    python3 python3-devel mariadb-devel \
-    hwloc-devel numactl-devel lua-devel \
-    libcurl-devel rrdtool-devel zlib-devel \
-    bzip2-devel
-
-# Download and build Slurm
-cd /tmp
-wget https://download.schedmd.com/slurm/slurm-23.11.2.tar.bz2
-tar xjf slurm-23.11.2.tar.bz2
-cd slurm-23.11.2
-
-# Configure
-./configure --prefix=/usr --sysconfdir=/etc/slurm
-
-# Build (takes 10-30 minutes)
-make -j$(nproc)
-
-# Install
-sudo make install
-
-# Install systemd service files
-if [ -d "contribs/systemd" ]; then
-    sudo cp contribs/systemd/slurmctld.service /etc/systemd/system/
-    sudo cp contribs/systemd/slurmd.service /etc/systemd/system/
-    sudo systemctl daemon-reload
-fi
-```
+If EPEL packages don't work, build from source. See [Slurm documentation](https://slurm.schedmd.com/quickstart_admin.html) for detailed instructions.
 
 ## Configuration Details
 
@@ -149,7 +132,12 @@ For a single-node setup (controller and compute on same machine):
 ```bash
 # Get system information
 CPU_COUNT=$(nproc)
+MEMORY_MB=$(free -m | awk '/^Mem:/{print $2}')
 HOSTNAME=$(hostname -s)
+
+# Display values for verification
+echo "CPU count: ${CPU_COUNT}"
+echo "Memory: ${MEMORY_MB}MB"
 
 # Create configuration
 sudo tee /etc/slurm/slurm.conf > /dev/null << EOF
@@ -180,9 +168,14 @@ SelectType=select/linear
 SlurmctldLogFile=/var/log/slurm/slurmctld.log
 SlurmdLogFile=/var/log/slurm/slurmd.log
 
-NodeName=localhost NodeAddr=127.0.0.1 CPUs=${CPU_COUNT} State=UNKNOWN
+NodeName=localhost NodeAddr=127.0.0.1 CPUs=${CPU_COUNT} RealMemory=${MEMORY_MB} State=UNKNOWN
 PartitionName=compute Nodes=localhost Default=YES MaxTime=INFINITE State=UP
 EOF
+
+# Verify configuration
+echo "Verifying slurm.conf..."
+grep RealMemory /etc/slurm/slurm.conf
+echo "CPU count: ${CPU_COUNT}, Memory: ${MEMORY_MB}MB"
 ```
 
 #### 3. Start Services
@@ -195,83 +188,34 @@ sudo systemctl enable --now slurmd
 # Verify services are running
 sudo systemctl status slurmctld
 sudo systemctl status slurmd
+
+# Verify Slurm recognizes node and memory correctly
+sinfo -o "%N %m"
+scontrol show node localhost | grep -i memory
 ```
+
+**Important**: After starting services, verify that `sinfo` shows the correct memory value (not 1MB or N/A). If memory shows incorrectly, see [Troubleshooting](#troubleshooting) section.
 
 #### 4. Service Management
 
-**Start Services:**
 ```bash
-sudo systemctl start slurmctld
-sudo systemctl start slurmd
-```
+# Start/Stop/Restart
+sudo systemctl start|stop|restart slurmctld slurmd
 
-**Stop Services:**
-```bash
-# Stop both services
-sudo systemctl stop slurmctld
-sudo systemctl stop slurmd
+# Enable/Disable auto-start
+sudo systemctl enable|disable slurmctld slurmd
 
-# Or stop both at once
-sudo systemctl stop slurmctld slurmd
-```
+# Check status
+sudo systemctl status slurmctld slurmd
 
-**Restart Services:**
-```bash
-# Restart both services
-sudo systemctl restart slurmctld
-sudo systemctl restart slurmd
-
-# Or restart both at once
-sudo systemctl restart slurmctld slurmd
-```
-
-**Check Service Status:**
-```bash
-sudo systemctl status slurmctld
-sudo systemctl status slurmd
-```
-
-**Enable/Disable Auto-Start:**
-```bash
-# Enable services to start on boot
-sudo systemctl enable slurmctld
-sudo systemctl enable slurmd
-
-# Disable services from starting on boot
-sudo systemctl disable slurmctld
-sudo systemctl disable slurmd
-```
-
-**Note**: Before stopping services, you may want to cancel running jobs:
-```bash
-# Cancel all your jobs
-scancel -u $USER
-
-# Then stop services
-sudo systemctl stop slurmctld slurmd
+# Before stopping, cancel jobs: scancel -u $USER
 ```
 
 ### Configuration Parameters Explained
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `ClusterName` | Name of your cluster | `slurm-cluster` |
-| `ControlMachine` | Hostname of controller | `localhost` |
-| `SlurmUser` | User that runs Slurm daemons | `slurm` |
-| `SlurmctldPort` | Port for controller | `6817` |
-| `SlurmdPort` | Port for compute daemon | `6818` |
-| `AuthType` | Authentication method | `auth/munge` |
-| `SchedulerType` | Job scheduler algorithm | `sched/backfill` |
-| `SelectType` | Node selection method | `select/linear` |
-| `NodeName` | Node definition | `localhost CPUs=4` |
-| `PartitionName` | Job partition | `compute` |
+Key parameters: `ClusterName`, `ControlMachine`, `SlurmUser`, `AuthType=auth/munge`, `NodeName` (with `CPUs` and `RealMemory`), `PartitionName`.
 
-**Important Notes:**
-- **By default, nodes are CPU-only** - No GPU configuration is needed for CPU workloads
-- **GPUs must be explicitly configured** - To enable GPU support, add `Gres=gpu:X` to the `NodeName` line in `slurm.conf` (where X is the number of GPUs)
-- **CPU nodes**: `NodeName=localhost CPUs=4 State=UNKNOWN` (no `Gres` parameter)
-- **GPU nodes**: `NodeName=gpu-node1 NodeAddr=192.168.1.20 CPUs=8 Gres=gpu:2 State=UNKNOWN` (includes `Gres=gpu:2`)
-- See [Adding GPU Nodes](#adding-gpu-nodes) section for complete GPU setup instructions
+**Important**: Nodes are CPU-only by default. For GPU support, add `Gres=gpu:X` to NodeName. See [Adding GPU Nodes](#adding-gpu-nodes).
 
 ## Advanced Configuration
 
@@ -280,257 +224,40 @@ sudo systemctl stop slurmctld slurmd
 For a cluster with separate controller and compute nodes:
 
 ```bash
-# On controller node, create slurm.conf
-sudo tee /etc/slurm/slurm.conf > /dev/null << 'EOF'
-ClusterName=slurm-cluster
-ControlMachine=controller
-SlurmUser=slurm
-SlurmctldPort=6817
-SlurmdPort=6818
-AuthType=auth/munge
-StateSaveLocation=/var/spool/slurmctld
-SlurmdSpoolDir=/var/spool/slurmd
-SwitchType=switch/none
-MpiDefault=none
-SlurmctldPidFile=/var/run/slurmctld.pid
-SlurmdPidFile=/var/run/slurmd.pid
-ProctrackType=proctrack/linuxproc
-ReturnToService=1
-SlurmctldTimeout=300
-SlurmdTimeout=300
-InactiveLimit=0
-MinJobAge=300
-KillWait=30
-Waittime=0
+# On controller, create slurm.conf with all nodes
+# NodeName=controller NodeAddr=192.168.1.10 CPUs=8 RealMemory=16384 State=UNKNOWN
+# NodeName=compute1 NodeAddr=192.168.1.11 CPUs=4 RealMemory=8192 State=UNKNOWN
+# NodeName=compute2 NodeAddr=192.168.1.12 CPUs=4 RealMemory=8192 State=UNKNOWN
+# PartitionName=compute Nodes=controller,compute1,compute2 Default=YES MaxTime=INFINITE State=UP
 
-SchedulerType=sched/backfill
-SelectType=select/linear
-
-SlurmctldLogFile=/var/log/slurm/slurmctld.log
-SlurmdLogFile=/var/log/slurm/slurmd.log
-
-NodeName=controller NodeAddr=192.168.1.10 CPUs=8 State=UNKNOWN
-NodeName=compute1 NodeAddr=192.168.1.11 CPUs=4 State=UNKNOWN
-NodeName=compute2 NodeAddr=192.168.1.12 CPUs=4 State=UNKNOWN
-
-PartitionName=compute Nodes=controller,compute1,compute2 Default=YES MaxTime=INFINITE State=UP
-EOF
-
-# Copy configuration to compute nodes
+# Copy slurm.conf and munge.key to compute nodes
 sudo scp /etc/slurm/slurm.conf root@compute1:/etc/slurm/
-sudo scp /etc/slurm/slurm.conf root@compute2:/etc/slurm/
-
-# Copy Munge key to all nodes (same key everywhere!)
 sudo scp /etc/munge/munge.key root@compute1:/etc/munge/
-sudo scp /etc/munge/munge.key root@compute2:/etc/munge/
 
-# On each compute node, set Munge key permissions
+# On compute nodes: Set munge key permissions and start services
 sudo chown munge:munge /etc/munge/munge.key
 sudo chmod 600 /etc/munge/munge.key
 sudo systemctl restart munge
+sudo systemctl enable --now slurmd
 ```
 
 ### Adding Compute Nodes to Existing Cluster
 
-To add more worker/compute nodes to your cluster:
-
-#### Step 1: Prepare the New Compute Node
-
-On the new compute node machine:
-
-```bash
-# Install EPEL
-sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
-
-# Install snapd
-sudo dnf install -y snapd
-sudo systemctl enable --now snapd.socket
-sudo ln -s /var/lib/snapd/snap /snap
-# Log out and back in
-
-# Install Munge
-sudo dnf install -y munge munge-libs munge-devel
-
-# Install Slurm
-sudo snap install slurm --classic
-sudo dnf install -y slurm-slurmd
-
-# Create Slurm user and directories
-sudo groupadd -r slurm
-sudo useradd -r -g slurm -d /var/lib/slurm -s /bin/bash slurm
-sudo mkdir -p /var/spool/slurmd /var/log/slurm /etc/slurm
-sudo chown slurm:slurm /var/spool/slurmd /var/log/slurm
-```
-
-#### Step 2: Copy Configuration from Controller
-
-On the controller node:
-
-```bash
-# Get the new node's hostname and IP
-# Example: compute3 with IP 192.168.1.13
-
-# Edit slurm.conf on controller to add new node
-sudo vi /etc/slurm/slurm.conf
-
-# Add the new node definition:
-# NodeName=compute3 NodeAddr=192.168.1.13 CPUs=4 State=UNKNOWN
-
-# Update partition to include new node:
-# PartitionName=compute Nodes=controller,compute1,compute2,compute3 Default=YES MaxTime=INFINITE State=UP
-```
-
-#### Step 3: Copy Files to New Node
-
-On the controller node:
-
-```bash
-# Copy slurm.conf to new node
-sudo scp /etc/slurm/slurm.conf root@compute3:/etc/slurm/
-
-# Copy Munge key (CRITICAL: must be same on all nodes!)
-sudo scp /etc/munge/munge.key root@compute3:/etc/munge/
-```
-
-#### Step 4: Configure New Node
-
-On the new compute node:
-
-```bash
-# Set Munge key permissions
-sudo chown munge:munge /etc/munge/munge.key
-sudo chmod 600 /etc/munge/munge.key
-
-# Start Munge
-sudo systemctl enable --now munge
-
-# Test Munge
-munge -n | unmunge
-
-# Start slurmd
-sudo systemctl enable --now slurmd
-
-# Check status
-sudo systemctl status slurmd
-```
-
-#### Step 5: Update Controller and Verify
-
-On the controller node:
-
-```bash
-# Reload Slurm configuration (if using scontrol reconfigure)
-sudo scontrol reconfigure
-
-# Or restart slurmctld
-sudo systemctl restart slurmctld
-
-# Verify new node appears
-sinfo
-
-# Check node details
-scontrol show node compute3
-
-# Test job on new node
-srun -w compute3 hostname
-```
+**Quick steps:**
+1. On new node: Install EPEL, snapd, Munge, Slurm (same as initial setup)
+2. On controller: Add node to slurm.conf: `NodeName=compute3 NodeAddr=192.168.1.13 CPUs=4 RealMemory=<MB> State=UNKNOWN`
+3. Copy slurm.conf and munge.key to new node
+4. On new node: Set munge key permissions, start munge and slurmd
+5. On controller: Restart slurmctld, verify with `sinfo`
 
 ### Adding GPU Nodes
 
-To add GPU nodes to your cluster:
-
-#### Step 1: Prepare GPU Node
-
-On the GPU node:
-
-```bash
-# Install NVIDIA drivers and CUDA (if not already installed)
-# Verify GPU is detected
-nvidia-smi
-
-# Install Slurm (same as regular compute node)
-sudo snap install slurm --classic
-sudo dnf install -y slurm-slurmd
-
-# Create Slurm user and directories
-sudo groupadd -r slurm
-sudo useradd -r -g slurm -d /var/lib/slurm -s /bin/bash slurm
-sudo mkdir -p /var/spool/slurmd /var/log/slurm /etc/slurm
-sudo chown slurm:slurm /var/spool/slurmd /var/log/slurm
-```
-
-#### Step 2: Configure GPU Resources in slurm.conf
-
-**Important**: GPUs must be explicitly configured by adding `Gres=gpu:X` to the `NodeName` line in `slurm.conf`. Without this parameter, nodes are CPU-only by default.
-
-On the controller node, edit `/etc/slurm/slurm.conf`:
-
-```bash
-# Add GPU node definition
-# Format: NodeName=<name> NodeAddr=<ip> CPUs=<count> Gres=gpu:<gpu_count> State=UNKNOWN
-# The Gres=gpu:X parameter is REQUIRED to enable GPU support
-# Example: 2 GPUs on the node
-NodeName=gpu-node1 NodeAddr=192.168.1.20 CPUs=8 Gres=gpu:2 State=UNKNOWN
-
-# Create GPU partition (optional but recommended)
-PartitionName=gpu Nodes=gpu-node1 Default=NO MaxTime=INFINITE State=UP
-```
-
-**Key Points:**
-- `Gres=gpu:2` means this node has 2 GPUs available
-- `Gres=gpu:1` means this node has 1 GPU available
-- Without `Gres=gpu:X`, the node is CPU-only (default behavior)
-- The GPU count (`X`) must match the actual number of GPUs on the node
-
-#### Step 3: Create gres.conf
-
-Create `/etc/slurm/gres.conf` on **all nodes** (controller and GPU nodes):
-
-```bash
-# On controller and GPU nodes
-sudo tee /etc/slurm/gres.conf > /dev/null << 'EOF'
-# GPU Resource Configuration
-# For 2 GPUs, use /dev/nvidia[0-1]
-# For 4 GPUs, use /dev/nvidia[0-3]
-Name=gpu File=/dev/nvidia[0-1]
-EOF
-```
-
-#### Step 4: Copy Configuration and Start Services
-
-```bash
-# Copy files to GPU node
-sudo scp /etc/slurm/slurm.conf root@gpu-node1:/etc/slurm/
-sudo scp /etc/slurm/gres.conf root@gpu-node1:/etc/slurm/
-sudo scp /etc/munge/munge.key root@gpu-node1:/etc/munge/
-
-# On GPU node
-sudo chown munge:munge /etc/munge/munge.key
-sudo chmod 600 /etc/munge/munge.key
-sudo systemctl enable --now munge
-sudo systemctl enable --now slurmd
-```
-
-#### Step 5: Verify GPU Detection
-
-```bash
-# On controller, check GPU resources
-sinfo -o "%N %G"  # Shows nodes and GPU resources
-scontrol show node gpu-node1 | grep -i gpu
-
-# Test GPU job
-srun --gres=gpu:1 --partition=gpu nvidia-smi
-```
-
-#### Quick Reference: Adding a Node
-
-```bash
-# 1. On new node: Install Slurm and Munge
-# 2. On controller: Add node to slurm.conf
-# 3. Copy slurm.conf and munge.key to new node
-# 4. On new node: Start slurmd
-# 5. On controller: Verify with sinfo
-```
+**Steps:**
+1. Install Slurm on GPU node (same as compute node)
+2. In slurm.conf, add GPU node with `Gres=gpu:X`: `NodeName=gpu-node1 NodeAddr=192.168.1.20 CPUs=8 RealMemory=<MB> Gres=gpu:2 State=UNKNOWN`
+3. Create `/etc/slurm/gres.conf` on all nodes: `Name=gpu File=/dev/nvidia[0-1]`
+4. Copy slurm.conf, gres.conf, and munge.key to GPU node
+5. Start services and verify: `sinfo -o "%N %G"`
 
 ### Partition Configuration
 
@@ -541,19 +268,6 @@ Create multiple partitions for different job types:
 PartitionName=short Nodes=ALL Default=NO MaxTime=01:00:00 State=UP
 PartitionName=long Nodes=ALL Default=NO MaxTime=7-00:00:00 State=UP
 PartitionName=compute Nodes=ALL Default=YES MaxTime=INFINITE State=UP
-```
-
-### Resource Limits
-
-Configure resource limits:
-
-```bash
-# Add to slurm.conf
-MaxJobCount=10000
-MaxArraySize=1001
-MaxNodeCount=1000
-DefMemPerNode=4096
-MaxMemPerNode=UNLIMITED
 ```
 
 ## Detailed Examples
@@ -648,45 +362,53 @@ cat cpu_test.out
 tail -f cpu_test.out
 ```
 
-**Alternative: Use a real CPU-intensive tool**
+### Example 4: Memory-Intensive Job
 
-For actual CPU-intensive work, use tools like `stress` or mathematical computations:
+**Note**: For memory jobs to work, your `slurm.conf` must include `RealMemory` in the NodeName definition. See [Configuration Details](#configuration-details) section.
+
+#### Step 1: Check Available Memory
+
+Before running memory jobs, check the available memory:
 
 ```bash
-cat > cpu_stress.sh << 'EOF'
-#!/bin/bash
-#SBATCH --job-name=cpu-stress
-#SBATCH --output=cpu_stress.out
-#SBATCH --time=00:02:00
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
+# Check actual system memory
+free -h
 
-echo "Starting CPU stress test..."
-echo "Using $SLURM_CPUS_ON_NODE CPUs"
-echo "Start time: $(date)"
+# Check memory configured in Slurm
+sinfo -o "%N %m"  # Shows node and memory in MB
+scontrol show node localhost | grep -i memory
 
-# Use stress command if available, or Python for calculations
-if command -v stress &> /dev/null; then
-    stress --cpu 2 --timeout 60s
-else
-    # Python-based CPU work
-    python3 << PYTHON
-import time
-start = time.time()
-result = sum(i * 2 for i in range(10000000))
-end = time.time()
-print(f"Calculation result: {result}")
-print(f"Time taken: {end - start:.2f} seconds")
-PYTHON
-fi
-
-echo "End time: $(date)"
-echo "Task completed!"
-EOF
+# Check if RealMemory is configured in slurm.conf
+grep RealMemory /etc/slurm/slurm.conf
 ```
 
-### Example 4: Memory-Intensive Job
+**Understanding the output:**
+- `free -h` shows actual system memory (total, used, available)
+- `sinfo -o "%N %m"` shows what Slurm knows about memory
+- If Slurm shows 'N/A' or no memory, you need to add `RealMemory` to `slurm.conf`
+
+#### Step 2: Configure Memory in Slurm (if needed or incorrect)
+
+If memory shows incorrect value (like 1MB instead of actual memory):
+
+```bash
+# Get system memory and update slurm.conf
+MEMORY_MB=$(free -m | awk '/^Mem:/{print $2}')
+echo "Updating RealMemory to ${MEMORY_MB}MB"
+
+# Update RealMemory value
+sudo sed -i "s/RealMemory=[0-9]*/RealMemory=${MEMORY_MB}/" /etc/slurm/slurm.conf
+
+# Or if RealMemory doesn't exist, add it after CPUs
+sudo sed -i "s/CPUs=\([0-9]*\)/CPUs=\1 RealMemory=${MEMORY_MB}/" /etc/slurm/slurm.conf
+
+# Restart services and verify
+sudo systemctl restart slurmctld slurmd
+sinfo -o "%N %m"
+scontrol show node localhost | grep -i memory
+```
+
+#### Step 3: Create and Submit Memory Job
 
 ```bash
 cat > memory_test.sh << 'EOF'
@@ -694,24 +416,51 @@ cat > memory_test.sh << 'EOF'
 #SBATCH --job-name=mem-test
 #SBATCH --output=mem_test.out
 #SBATCH --time=00:02:00
-#SBATCH --mem=2G
+#SBATCH --mem=512M
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 
+echo "Memory Job Information:"
+echo "Requested memory: $SLURM_MEM_PER_NODE"
+echo "Job started at: $(date)"
+
 echo "Allocating memory..."
-# Allocate 1.5GB of memory
+# Allocate 400MB of memory (less than requested 512M)
 python3 << PYTHON
 import array
-data = array.array('B', [0]) * (1500 * 1024 * 1024)
+import time
+data = array.array('B', [0]) * (400 * 1024 * 1024)
 print(f"Allocated {len(data) / (1024*1024):.2f} MB")
-input("Press Enter to continue...")
+print("Holding memory for 5 seconds...")
+time.sleep(5)
+print("Releasing memory...")
 PYTHON
 
-echo "Memory test completed"
+echo "Memory test completed at: $(date)"
 EOF
 
+# Submit the job
 sbatch memory_test.sh
+
+# Check job status
+squeue -u $USER
+
+# After job completes, check output
+cat mem_test.out
 ```
+
+#### Step 4: Verify Memory Usage
+
+```bash
+# Check memory before/after job
+free -h
+cat mem_test.out
+```
+
+**Troubleshooting**: If you get "Memory specification can not be satisfied":
+- Check `RealMemory` in slurm.conf: `grep RealMemory /etc/slurm/slurm.conf`
+- Use smaller memory request: `--mem=256M` instead of `--mem=512M`
+- Restart services after config changes: `sudo systemctl restart slurmctld slurmd`
 
 ### Example 5: Array Jobs
 
@@ -742,6 +491,30 @@ cat array_12345_1.out  # JobID_ArrayTaskID
 ### Example 6: Dependent Jobs
 
 ```bash
+# Create first job script
+cat > job1.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=job1
+#SBATCH --output=job1.out
+#SBATCH --time=00:01:00
+
+echo "Job 1 starting..."
+sleep 30
+echo "Job 1 completed!"
+EOF
+
+# Create second job script
+cat > job2.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=job2
+#SBATCH --output=job2.out
+#SBATCH --time=00:01:00
+
+echo "Job 2 starting (after job1 completed)..."
+echo "Job 1 must have finished successfully!"
+echo "Job 2 completed!"
+EOF
+
 # Submit first job
 JOB1=$(sbatch --job-name=job1 --output=job1.out job1.sh | awk '{print $4}')
 echo "Job 1 ID: $JOB1"
@@ -753,81 +526,9 @@ sbatch --job-name=job2 --output=job2.out --dependency=afterok:$JOB1 job2.sh
 squeue -u $USER
 ```
 
-### Example 7: Job with Environment Variables
+**Explanation**: Job 2 will wait in "Dependency" state until Job 1 completes successfully. Once Job 1 finishes, Job 2 will automatically start.
 
-```bash
-cat > env_job.sh << 'EOF'
-#!/bin/bash
-#SBATCH --job-name=env-test
-#SBATCH --output=env_test.out
-#SBATCH --time=00:01:00
-
-# Export custom environment variables
-export MY_VAR="Hello from Slurm"
-export MY_NUM=42
-
-echo "Custom variable: $MY_VAR"
-echo "Number: $MY_NUM"
-echo "Slurm job ID: $SLURM_JOB_ID"
-echo "Slurm node: $SLURM_NODELIST"
-EOF
-
-sbatch env_job.sh
-```
-
-### Example 8: Multiple Jobs in Sequence
-
-```bash
-# Submit multiple jobs
-for i in {1..5}; do
-    sbatch --job-name=job$i --output=job$i.out test.sh
-done
-
-# Check all jobs
-squeue -u $USER
-
-# Wait for completion
-sleep 30
-
-# Check all outputs
-cat job*.out
-```
-
-### Example 9: Job with Time Limit
-
-```bash
-cat > timed_job.sh << 'EOF'
-#!/bin/bash
-#SBATCH --job-name=timed
-#SBATCH --output=timed.out
-#SBATCH --time=00:00:30  # 30 seconds
-
-echo "Job started at: $(date)"
-echo "Will run for 30 seconds"
-sleep 30
-echo "Job completed at: $(date)"
-EOF
-
-sbatch timed_job.sh
-```
-
-### Example 10: Monitoring Job Progress
-
-```bash
-# Submit job
-JOBID=$(sbatch --job-name=monitor job.sh | awk '{print $4}')
-
-# Monitor job in real-time
-watch -n 1 "squeue -j $JOBID"
-
-# Check job details
-scontrol show job $JOBID
-
-# Follow job output
-tail -f job.out
-```
-
-### Example 11: GPU Job
+### Example 7: GPU Job
 
 **Prerequisites**: GPU nodes must be configured with `Gres=gpu:X` in slurm.conf and `/etc/slurm/gres.conf` must be set up.
 
@@ -877,344 +578,73 @@ squeue -u $USER
 cat gpu_test.out
 ```
 
-**Requesting Multiple GPUs:**
-
-```bash
-cat > gpu_multi.sh << 'EOF'
-#!/bin/bash
-#SBATCH --job-name=gpu-multi
-#SBATCH --output=gpu_multi.out
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:2        # Request 2 GPUs
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --time=00:10:00
-
-echo "Allocated GPUs: $SLURM_GPUS_ON_NODE"
-nvidia-smi
-# Your multi-GPU workload here
-EOF
-
-sbatch gpu_multi.sh
-```
-
-**Interactive GPU Job:**
-
-```bash
-# Request GPU interactively
-srun --gres=gpu:1 --partition=gpu --time=00:30:00 nvidia-smi
-
-# Or get an interactive shell with GPU
-srun --gres=gpu:1 --partition=gpu --time=01:00:00 --pty bash
-# Then inside the shell:
-nvidia-smi
-python3 my_gpu_script.py
-```
-
-**Note**: For GPU jobs to work, you need:
-1. GPU nodes configured in slurm.conf with `Gres=gpu:X`
-2. `/etc/slurm/gres.conf` file on all nodes
-3. NVIDIA drivers and CUDA installed on GPU nodes
-4. GPU partition created in slurm.conf
+**Note**: For GPU jobs to work, you need GPU nodes configured in slurm.conf with `Gres=gpu:X` and `/etc/slurm/gres.conf` file. See [Adding GPU Nodes](#adding-gpu-nodes) section.
 
 ## Testing and Validation
 
-### Basic Validation
-
 ```bash
-# Check Slurm version
+# Basic checks
 scontrol --version
-
-# Check configuration
+sinfo
 scontrol show config
 
-# Check node status
-sinfo
-
-# Check detailed node info
-sinfo -N -l
-
-# Check partition status
-sinfo -l
+# Test jobs
+srun hostname
+sbatch hello.sh && sleep 5 && cat hello.out
 
 # Check services
-sudo systemctl status slurmctld
-sudo systemctl status slurmd
-```
-
-### Comprehensive Test Suite
-
-```bash
-# Test 1: Simple command
-srun hostname
-
-# Test 2: Resource allocation
-srun -N 1 -n 2 --time=1:00 hostname
-
-# Test 3: Batch job
-sbatch test.sh && sleep 5 && cat test.out
-
-# Test 4: Multiple jobs
-for i in {1..3}; do sbatch --job-name=test$i test.sh; done
-squeue
-sleep 10
-cat test*.out
-
-# Test 5: Job cancellation
-JOBID=$(sbatch test.sh | awk '{print $4}')
-scancel $JOBID
-squeue -j $JOBID
-
-# Test 6: Job status query
-JOBID=$(sbatch test.sh | awk '{print $4}')
-scontrol show job $JOBID
-
-# Test 7: Node information
-scontrol show node localhost
-
-# Test 8: Partition information
-scontrol show partition compute
-```
-
-### Performance Testing
-
-```bash
-# Test job throughput
-time for i in {1..10}; do sbatch test.sh; done
-
-# Test resource utilization
-srun --time=1:00 --mem=1G stress --cpu 2 --timeout 60s
-
-# Monitor resource usage
-sstat -j <JOBID> --format=JobID,MaxRSS,MaxVMSize
+sudo systemctl status slurmctld slurmd
 ```
 
 ## Troubleshooting
 
-### Service Management
-
-**Stop Services:**
-```bash
-# Stop both services
-sudo systemctl stop slurmctld slurmd
-
-# Cancel running jobs first (recommended)
-scancel -u $USER
-sudo systemctl stop slurmctld slurmd
-```
-
-**Start Services:**
-```bash
-sudo systemctl start slurmctld slurmd
-```
-
-**Restart Services:**
-```bash
-# Restart both services
-sudo systemctl restart slurmctld slurmd
-```
-
-**Check Service Status:**
-```bash
-sudo systemctl status slurmctld
-sudo systemctl status slurmd
-```
-
-**Enable/Disable Auto-Start:**
-```bash
-# Enable services to start on boot
-sudo systemctl enable slurmctld slurmd
-
-# Disable services from starting on boot
-sudo systemctl disable slurmctld slurmd
-```
-
 ### Service Issues
 
-#### slurmctld Won't Start
-
 ```bash
-# Check service status
-sudo systemctl status slurmctld
-
-# Check logs
-sudo tail -50 /var/log/slurm/slurmctld.log
-sudo journalctl -u slurmctld -n 50
+# Check services and logs
+sudo systemctl status slurmctld slurmd
+sudo tail -20 /var/log/slurm/slurmctld.log
+sudo tail -20 /var/log/slurm/slurmd.log
 
 # Validate configuration
 sudo slurmctld -C
 
-# Check file permissions
-ls -la /var/spool/slurmctld
-sudo chown slurm:slurm /var/spool/slurmctld
-
-# Check if port is in use
-sudo netstat -tlnp | grep 6817
-```
-
-#### slurmd Won't Start
-
-```bash
-# Check service status
-sudo systemctl status slurmd
-
-# Check logs
-sudo tail -50 /var/log/slurm/slurmd.log
-sudo journalctl -u slurmd -n 50
-
-# Verify Munge
-munge -n | unmunge
-
-# Check network connectivity to controller
-ping localhost
-telnet localhost 6817
-
-# Verify configuration matches controller
-diff /etc/slurm/slurm.conf controller:/etc/slurm/slurm.conf
-```
-
-### Configuration Issues
-
-#### Invalid Configuration
-
-```bash
-# Validate configuration syntax
-sudo slurmctld -C
-
-# Check for common errors
-grep -E "SelectTypeParameters|AuthType" /etc/slurm/slurm.conf
-
-# Verify node definitions
-grep NodeName /etc/slurm/slurm.conf
-
-# Verify partition definitions
-grep PartitionName /etc/slurm/slurm.conf
-```
-
-#### Node Shows as DOWN
-
-```bash
-# Check node status
-sinfo -N -l
-scontrol show node localhost
-
-# Check slurmd status
-sudo systemctl status slurmd
-
-# Verify Munge key matches
-sudo md5sum /etc/munge/munge.key
-
 # Restart services
-sudo systemctl restart munge
-sudo systemctl restart slurmd
-sudo systemctl restart slurmctld
+sudo systemctl restart slurmctld slurmd
 ```
 
 ### Job Issues
 
-#### Jobs Stuck in PENDING
-
 ```bash
-# Check why job is pending (most important!)
+# Check why job is pending
 squeue -j <JOBID> -o "%.18i %.9P %.8j %.8u %.2t %.10M %.6D %R"
-
-# Check job details to see what it's requesting
 scontrol show job <JOBID>
 
-# Check partition configuration
-sinfo -l
-scontrol show partition compute
-
-# Check node availability
-sinfo -o "%P %a %l %D %t %N"
-
-# Check resource availability
-sinfo -o "%P %C %m %G"
-
-# Common issue: Job requesting more nodes than available
-# If job shows "PartitionConfig" reason, check:
-# 1. Job is requesting correct number of nodes (--nodes=1 for single-node setup)
-# 2. Partition allows the requested resources
-# 3. Node count in slurm.conf matches actual setup
-```
-
-#### Jobs Fail Immediately
-
-```bash
 # Check job output
 cat slurm-<JOBID>.out
 cat slurm-<JOBID>.err
-
-# Check job details
-scontrol show job <JOBID>
-
-# Verify job script is executable
-chmod +x job.sh
-
-# Check resource requests
-# Ensure requested resources are available
 ```
 
-#### Permission Denied Errors
+### Common Issues
 
 ```bash
-# Check file permissions
-ls -la job.sh
-chmod +x job.sh
-
-# Check output directory permissions
-mkdir -p output
-chmod 755 output
-
-# Verify user can write
-touch output/test && rm output/test
-```
-
-### Authentication Issues
-
-#### Munge Authentication Fails
-
-```bash
-# Verify Munge key is same on all nodes
-sudo md5sum /etc/munge/munge.key
-
-# Restart Munge
+# Munge authentication
+munge -n | unmunge
 sudo systemctl restart munge
 
-# Test Munge
-munge -n | unmunge
+# Node shows DOWN
+sinfo -N -l
+sudo systemctl restart slurmd slurmctld
 
-# Check Munge logs
-sudo journalctl -u munge -n 20
+# Configuration errors
+sudo slurmctld -C
+grep NodeName /etc/slurm/slurm.conf
 
-# Verify key permissions
-ls -la /etc/munge/munge.key
-sudo chown munge:munge /etc/munge/munge.key
-sudo chmod 600 /etc/munge/munge.key
-```
-
-### Network Issues
-
-#### Cannot Connect to Controller
-
-```bash
-# Test network connectivity
-ping <controller-hostname>
-ping <controller-ip>
-
-# Test port connectivity
-telnet <controller-hostname> 6817
-nc -zv <controller-hostname> 6817
-
-# Check firewall
-sudo firewall-cmd --list-all
-sudo firewall-cmd --permanent --add-port=6817/tcp
-sudo firewall-cmd --permanent --add-port=6818/tcp
-sudo firewall-cmd --reload
-
-# Check SELinux
-sudo getenforce
-sudo setenforce 0  # Temporarily disable for testing
+# Memory shows incorrectly (1MB or N/A)
+MEMORY_MB=$(free -m | awk '/^Mem:/{print $2}')
+sudo sed -i "s/RealMemory=[0-9]*/RealMemory=${MEMORY_MB}/" /etc/slurm/slurm.conf
+sudo systemctl restart slurmctld slurmd
+sinfo -o "%N %m"
 ```
 
 ### Common Error Messages and Solutions
@@ -1228,60 +658,19 @@ sudo setenforce 0  # Temporarily disable for testing
 | `fatal: failed to initialize authentication` | Install and configure Munge properly |
 | `error: Unit file does not exist` | Install `slurm-slurmctld` and `slurm-slurmd` packages |
 | `Jobs stuck in PENDING` | Check partition configuration and resource availability |
+| `error: too early for operation` | Wait 10-30 seconds after installing snapd, or restart snapd services |
+| `Memory specification can not be satisfied` | Add `RealMemory=<MB>` to NodeName in slurm.conf, restart services |
+| `SSL certificate errors (OCSP expired)` | Sync system time: `sudo chronyd -q`, update certificates: `sudo update-ca-trust` |
 
-### Debug Mode
-
-Enable detailed logging:
-
-```bash
-# Edit slurm.conf
-sudo vi /etc/slurm/slurm.conf
-
-# Add debug flags
-SlurmctldDebug=debug5
-SlurmdDebug=debug5
-
-# Restart services
-sudo systemctl restart slurmctld
-sudo systemctl restart slurmd
-
-# Check detailed logs
-sudo tail -f /var/log/slurm/slurmctld.log
-sudo tail -f /var/log/slurm/slurmd.log
-```
-
-### Useful Diagnostic Commands
+### Diagnostic Commands
 
 ```bash
-# Check Slurm version
 scontrol --version
-
-# Show full configuration
 scontrol show config
-
-# Show all nodes
-scontrol show nodes
-
-# Show all partitions
-scontrol show partition
-
-# Show all jobs
-squeue
-
-# Show specific job
-scontrol show job <JOBID>
-
-# Cancel job
-scancel <JOBID>
-
-# Check cluster status
 sinfo
-sinfo -l
-sinfo -N -l
-
-# Check accounting (if enabled)
-sacct -j <JOBID>
-sacct -u $USER
+squeue
+scontrol show job <JOBID>
+scontrol show node localhost
 ```
 
 ## Additional Resources

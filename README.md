@@ -73,11 +73,9 @@ slurm-on-rhel/
 ├── QUICK_START.md           # Quick setup guide
 ├── configs/
 │   └── slurm.conf.template  # Reference configuration template
-├── docs/
-│   ├── DETAILED_GUIDE.md    # Comprehensive guide
-│   └── ARCHITECTURE.md      # Architecture explanation
-└── video/
-    └── VIDEO_SCRIPT.md      # Video tutorial script (for recording)
+└── docs/
+    ├── DETAILED_GUIDE.md    # Comprehensive guide
+    └── ARCHITECTURE.md      # Architecture explanation
 ```
 
 ## Support
