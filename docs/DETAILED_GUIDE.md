@@ -420,11 +420,12 @@ cat > memory_test.sh << 'EOF'
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 
-echo "Memory Job Information:"
+echo "=== Memory Job Information ==="
 echo "Requested memory: $SLURM_MEM_PER_NODE"
 echo "Job started at: $(date)"
+echo ""
 
-echo "Allocating memory..."
+echo "=== Allocating memory... ==="
 # Allocate 400MB of memory (less than requested 512M)
 python3 << PYTHON
 import array
@@ -436,24 +437,78 @@ time.sleep(5)
 print("Releasing memory...")
 PYTHON
 
+echo ""
 echo "Memory test completed at: $(date)"
 EOF
-
-# Submit the job
-sbatch memory_test.sh
-
-# Check job status
-squeue -u $USER
-
-# After job completes, check output
-cat mem_test.out
 ```
 
 #### Step 4: Verify Memory Usage
 
+**Before submitting the job:**
+
 ```bash
-# Check memory before/after job
+# Check system memory before job
+echo "=== Memory BEFORE job ==="
 free -h
+echo ""
+echo "Memory available in Slurm:"
+sinfo -o "%N %m"
+```
+
+**Submit the job:**
+
+```bash
+sbatch memory_test.sh
+```
+
+**While job is running (in another terminal):**
+
+```bash
+# Monitor memory in real-time
+watch -n 1 'free -h'
+
+# Or check once
+free -h
+```
+
+**After job completes:**
+
+```bash
+# Check memory after job
+echo "=== Memory AFTER job ==="
+free -h
+echo ""
+echo "Job output:"
+cat mem_test.out
+```
+
+**Complete example with timing:**
+
+```bash
+# Step 1: Check memory before
+echo "=== BEFORE ==="
+free -h | grep -E "Mem|Swap"
+sinfo -o "%N %m"
+
+# Step 2: Submit job
+JOBID=$(sbatch memory_test.sh | awk '{print $4}')
+echo "Job submitted: $JOBID"
+
+# Step 3: Wait for job to start
+sleep 3
+echo ""
+echo "=== DURING (job running) ==="
+free -h | grep -E "Mem|Swap"
+
+# Step 4: Wait for job to complete
+squeue -j $JOBID
+echo "Waiting for job to complete..."
+sleep 10
+
+# Step 5: Check memory after
+echo ""
+echo "=== AFTER ==="
+free -h | grep -E "Mem|Swap"
 cat mem_test.out
 ```
 
